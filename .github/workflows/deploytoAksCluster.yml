@@ -1,0 +1,50 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: acrmicroservices.azurecr.io
+        username: ${{ secrets.acr_acrmicroservices_username }}
+        password: ${{ secrets.acr_acrmicroservices_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/" -f  "Dockerfile" -t acrmicroservices.azurecr.io/aksscc:${{ github.sha }} --label dockerfile-path=Dockerfile
+        docker push acrmicroservices.azurecr.io/aksscc:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_aksscc_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep aks-scc-demo1644 | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace aks-scc-demo1644`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: aks-scc-demo1644
+        container-registry-url: acrmicroservices.azurecr.io
+        container-registry-username: ${{ secrets.acr_acrmicroservices_username }}
+        container-registry-password: ${{ secrets.acr_acrmicroservices_password }}
+        secret-name: akssccdockerauth
+       
+    - uses: azure/k8s-deploy@v1.2
+      with:
+        namespace: aks-scc-demo1644
+        manifests: |
+          manifests/deployment.yml
+          manifests/service.yml
+        images: |
+          acrmicroservices.azurecr.io/aksscc:${{ github.sha }}
+        imagepullsecrets: |
+          akssccdockerauth
